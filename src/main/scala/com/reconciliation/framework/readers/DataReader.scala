@@ -6,13 +6,15 @@ object DataReader {
 
   private val cache = scala.collection.mutable.Map[String, DataFrame]()
 
-  def read(spark: SparkSession, sourceType: String, path: Option[String], table: Option[String], query: Option[String]): DataFrame = {
-    val cacheKey = s"$sourceType-$path-$table-$query"
+  def read(spark: SparkSession, sourceType: String, path: Option[String], table: Option[String], query: Option[String], delimiter: Option[String]): DataFrame = {
+    val cacheKey = s"$sourceType-$path-$table-$query-$delimiter"
     cache.getOrElseUpdate(cacheKey, {
         val df = sourceType.toLowerCase match {
         case "local" =>
             val format = path.get.split('.').last
-            spark.read.format(format).option("header", "true").load(path.get)
+            val reader = spark.read.format(format).option("header", "true")
+            delimiter.foreach(d => reader.option("delimiter", d))
+            reader.load(path.get)
         case "hive" =>
             spark.table(table.get)
         case "jdbc" =>

@@ -16,8 +16,8 @@ class SourceToTargetReconciliation extends Reconciliation with Logger {
     AuditLogger.log(spark, config, "SourceToTarget", "STARTED", "Starting source to target reconciliation")
 
     try {
-      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
-      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+    val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
+    val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
       val aliasedSourceDf = config.columnMapping.foldLeft(sourceDf) { (df, mapping) =>
         df.withColumnRenamed(mapping._1, mapping._2)
@@ -71,12 +71,12 @@ class BusinessRuleReconciliation extends Reconciliation with Logger {
 
     try {
       config.businessRuleSQL.foreach { sql =>
-        val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
+        val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
         sourceDf.createOrReplaceTempView("source_view")
 
         val businessRuleResultDf = spark.sql(sql)
 
-        val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+        val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
         val sourceMinusTarget = businessRuleResultDf.exceptAll(targetDf)
         val targetMinusSource = targetDf.exceptAll(businessRuleResultDf)
@@ -120,8 +120,8 @@ class RecordCountReconciliation extends Reconciliation with Logger {
     AuditLogger.log(spark, config, "RecordCount", "STARTED", "Starting record count reconciliation")
 
     try {
-      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
-      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+    val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
+    val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
       val sourceCount = sourceDf.count()
       val targetCount = targetDf.count()
@@ -150,8 +150,8 @@ class MissingExtraRecordsReconciliation extends Reconciliation with Logger {
     AuditLogger.log(spark, config, "MissingExtraRecords", "STARTED", "Starting missing/extra records reconciliation")
 
     try {
-      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
-      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+    val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
+    val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
       val sourcePk = config.primaryKeyMapping.keys.toSeq
       val targetPk = config.primaryKeyMapping.values.toSeq
@@ -191,8 +191,8 @@ class ThresholdReconciliation extends Reconciliation with Logger {
     AuditLogger.log(spark, config, "Threshold", "STARTED", "Starting threshold-based reconciliation")
 
     try {
-        val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
-        val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+        val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
+        val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
         config.threshold.foreach { threshold =>
             val numericColumns = sourceDf.dtypes.filter(_._2 == "DoubleType").map(_._1)
@@ -232,8 +232,8 @@ class SchemaDriftReconciliation extends Reconciliation with Logger {
     AuditLogger.log(spark, config, "SchemaDrift", "STARTED", "Starting schema drift reconciliation")
 
     try {
-      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
-      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery, config.sourceDelimiter)
+      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None, None)
 
       val sourceSchema = sourceDf.schema
       val targetSchema = targetDf.schema
