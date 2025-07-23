@@ -40,10 +40,19 @@ class SourceToTargetReconciliation extends Reconciliation with Logger {
         logger.info(message)
         AuditLogger.log(spark, config, "SourceToTarget", "SUCCESS", message)
       } else {
-        val message = s"Mismatches found. ${sourceMinusTarget.count()} records in source only, ${targetMinusSource.count()} records in target only."
+          val sourceMismatchCount = sourceMinusTarget.count()
+          val targetMismatchCount = targetMinusSource.count()
+          val message = s"Mismatches found. $sourceMismatchCount records in source only, $targetMismatchCount records in target only."
         logger.warn(message)
         AuditLogger.log(spark, config, "SourceToTarget", "FAILURE", message)
-        // In a real application, you would write the mismatched records to a file or table.
+
+          if(sourceMismatchCount > 0) {
+            DeadLetterQueue.write(spark, config, "SourceToTarget_SourceOnly", sourceMinusTarget)
+          }
+
+          if(targetMismatchCount > 0) {
+            DeadLetterQueue.write(spark, config, "SourceToTarget_TargetOnly", targetMinusSource)
+          }
       }
     } catch {
       case e: Exception =>
@@ -86,11 +95,13 @@ class BusinessRuleReconciliation extends Reconciliation with Logger {
           if(sourceMismatchCount > 0) {
             println("Records from business rule query not found in target:")
             sourceMinusTarget.show()
+            DeadLetterQueue.write(spark, config, "BusinessRule_SourceOnly", sourceMinusTarget)
           }
 
           if(targetMismatchCount > 0) {
             println("Records in target not found in business rule query result:")
             targetMinusSource.show()
+            DeadLetterQueue.write(spark, config, "BusinessRule_TargetOnly", targetMinusSource)
           }
         }
       }
@@ -174,16 +185,106 @@ class MissingExtraRecordsReconciliation extends Reconciliation with Logger {
   }
 }
 
-class ThresholdReconciliation extends Reconciliation {
-    override def reconcile(spark: SparkSession, config: AppConfig): Unit = {
-        println("Performing Threshold-based Reconciliation...")
-        // Implementation details will be added later
+class ThresholdReconciliation extends Reconciliation with Logger {
+  override def reconcile(spark: SparkSession, config: AppConfig): Unit = {
+    logger.info("Performing Threshold-based Reconciliation...")
+    AuditLogger.log(spark, config, "Threshold", "STARTED", "Starting threshold-based reconciliation")
+
+    try {
+        val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
+        val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+
+        config.threshold.foreach { threshold =>
+            val numericColumns = sourceDf.dtypes.filter(_._2 == "DoubleType").map(_._1)
+
+            numericColumns.foreach { colName =>
+                val aliasedColName = config.columnMapping.getOrElse(colName, colName)
+                if (targetDf.columns.contains(aliasedColName)) {
+                    val joinedDf = sourceDf.join(targetDf, sourceDf(colName) === targetDf(aliasedColName))
+                    val mismatchedDf = joinedDf.filter(s"abs(${colName} - ${aliasedColName}) > $threshold")
+
+                    if (mismatchedDf.count() > 0) {
+                        val message = s"Threshold breached for column $colName"
+                        logger.warn(message)
+                        AuditLogger.log(spark, config, "Threshold", "FAILURE", message)
+                        println(s"Threshold breaches for column $colName:")
+                        mismatchedDf.show()
+                    } else {
+                        val message = s"Threshold check passed for column $colName"
+                        logger.info(message)
+                        AuditLogger.log(spark, config, "Threshold", "SUCCESS", message)
+                    }
+                }
+            }
+        }
+    } catch {
+      case e: Exception =>
+        val message = s"An error occurred during Threshold-based Reconciliation: ${e.getMessage}"
+        logger.error(message, e)
+        AuditLogger.log(spark, config, "Threshold", "ERROR", message)
     }
+  }
 }
 
-class SchemaDriftReconciliation extends Reconciliation {
-    override def reconcile(spark: SparkSession, config: AppConfig): Unit = {
-        println("Performing Schema Drift Reconciliation...")
-        // Implementation details will be added later
+class SchemaDriftReconciliation extends Reconciliation with Logger {
+  override def reconcile(spark: SparkSession, config: AppConfig): Unit = {
+    logger.info("Performing Schema Drift Reconciliation...")
+    AuditLogger.log(spark, config, "SchemaDrift", "STARTED", "Starting schema drift reconciliation")
+
+    try {
+      val sourceDf = DataReader.read(spark, config.sourceType, config.sourcePath, config.sourceTable, config.sourceQuery)
+      val targetDf = DataReader.read(spark, config.targetType, config.targetPath, config.targetTable, None)
+
+      val sourceSchema = sourceDf.schema
+      val targetSchema = targetDf.schema
+
+      var driftFound = false
+      val driftDetails = new StringBuilder
+
+      if (sourceSchema.length != targetSchema.length) {
+        driftFound = true
+        driftDetails.append(s"Column count mismatch: Source has ${sourceSchema.length}, Target has ${targetSchema.length}. ")
+      }
+
+      val sourceColumns = sourceSchema.fields.map(f => (f.name, f.dataType, f.nullable)).toSeq
+      val targetColumns = targetSchema.fields.map(f => (f.name, f.dataType, f.nullable)).toSeq
+
+      if (sourceColumns.map(_._1) != targetColumns.map(_._1)) {
+        driftFound = true
+        driftDetails.append("Column order mismatch. ")
+      }
+
+      val sourceColSet = sourceColumns.map(c => (c._1, c._2.typeName, c._3)).toSet
+      val targetColSet = targetColumns.map(c => (c._1, c._2.typeName, c._3)).toSet
+
+      val missingInTarget = sourceColSet -- targetColSet
+      val missingInSource = targetColSet -- sourceColSet
+
+      if (missingInTarget.nonEmpty) {
+        driftFound = true
+        driftDetails.append(s"Columns missing in target: ${missingInTarget.map(_._1).mkString(", ")}. ")
+      }
+
+      if (missingInSource.nonEmpty) {
+        driftFound = true
+        driftDetails.append(s"Columns missing in source: ${missingInSource.map(_._1).mkString(", ")}. ")
+      }
+
+      if (driftFound) {
+        val message = s"Schema drift detected: ${driftDetails.toString()}"
+        logger.warn(message)
+        AuditLogger.log(spark, config, "SchemaDrift", "FAILURE", message)
+      } else {
+        val message = "No schema drift detected."
+        logger.info(message)
+        AuditLogger.log(spark, config, "SchemaDrift", "SUCCESS", message)
+      }
+
+    } catch {
+      case e: Exception =>
+        val message = s"An error occurred during Schema Drift Reconciliation: ${e.getMessage}"
+        logger.error(message, e)
+        AuditLogger.log(spark, config, "SchemaDrift", "ERROR", message)
     }
+  }
 }

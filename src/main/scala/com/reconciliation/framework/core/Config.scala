@@ -42,52 +42,62 @@ object Config {
     var statement: java.sql.PreparedStatement = null
     var resultSet: java.sql.ResultSet = null
 
-    try {
-      // Class.forName("oracle.jdbc.driver.OracleDriver")
-      // connection = java.sql.DriverManager.getConnection(jdbcUrl, username, password)
-      // val query = "SELECT * FROM RECON_CONFIG WHERE jobName = ?"
-      // statement = connection.prepareStatement(query)
-      // statement.setString(1, jobName)
-      // resultSet = statement.executeQuery()
+    var appConfig: Option[AppConfig] = None
+    var retries = 3
+    while (appConfig.isEmpty && retries > 0) {
+      try {
+        // Class.forName("oracle.jdbc.driver.OracleDriver")
+        // connection = java.sql.DriverManager.getConnection(jdbcUrl, username, password)
+        // val query = "SELECT * FROM RECON_CONFIG WHERE jobName = ?"
+        // statement = connection.prepareStatement(query)
+        // statement.setString(1, jobName)
+        // resultSet = statement.executeQuery()
 
-      // if (resultSet.next()) {
-        // AppConfig(
-          // jobName = resultSet.getString("jobName"),
-          // sourceType = resultSet.getString("sourceType"),
-          // sourcePath = Option(resultSet.getString("sourcePath")),
-          // sourceTable = Option(resultSet.getString("sourceTable")),
-          // sourceQuery = Option(resultSet.getString("sourceQuery")),
-          // targetType = resultSet.getString("targetType"),
-          // targetPath = Option(resultSet.getString("targetPath")),
-          // targetTable = Option(resultSet.getString("targetTable")),
-          // reconTypes = resultSet.getString("reconTypes").split(",").map(_.trim),
-          // columnMapping = parseMapping(resultSet.getString("columnMapping")),
-          // primaryKeyMapping = parseMapping(resultSet.getString("primaryKeyMapping")),
-          // threshold = Option(resultSet.getBigDecimal("threshold")).map(_.doubleValue()),
-          // businessRuleSQL = Option(resultSet.getString("businessRuleSQL")),
-          // notifyOnSuccess = resultSet.getString("notifyOnSuccess") == "Y",
-          // notifyOnFailure = resultSet.getString("notifyOnFailure") == "Y",
-          // emailTo = Option(resultSet.getString("emailTo")),
-          // emailSubject = Option(resultSet.getString("emailSubject")),
-          // writeToHiveFlag = resultSet.getString("writeToHiveFlag") == "Y",
-          // auditFlag = resultSet.getString("auditFlag") == "Y",
-          // logLevel = resultSet.getString("logLevel"),
-          // runId = resultSet.getString("runId"),
-          // createdBy = resultSet.getString("createdBy"),
-          // runDate = resultSet.getDate("runDate")
-        // )
-      // } else {
-        // throw new RuntimeException(s"No configuration found for job: $jobName")
-      // }
+        // if (resultSet.next()) {
+        //   appConfig = Some(AppConfig(
+        //     jobName = resultSet.getString("jobName"),
+        //     sourceType = resultSet.getString("sourceType"),
+        //     sourcePath = Option(resultSet.getString("sourcePath")),
+        //     sourceTable = Option(resultSet.getString("sourceTable")),
+        //     sourceQuery = Option(resultSet.getString("sourceQuery")),
+        //     targetType = resultSet.getString("targetType"),
+        //     targetPath = Option(resultSet.getString("targetPath")),
+        //     targetTable = Option(resultSet.getString("targetTable")),
+        //     reconTypes = resultSet.getString("reconTypes").split(",").map(_.trim),
+        //     columnMapping = parseMapping(resultSet.getString("columnMapping")),
+        //     primaryKeyMapping = parseMapping(resultSet.getString("primaryKeyMapping")),
+        //     threshold = Option(resultSet.getBigDecimal("threshold")).map(_.doubleValue()),
+        //     businessRuleSQL = Option(resultSet.getString("businessRuleSQL")),
+        //     notifyOnSuccess = resultSet.getString("notifyOnSuccess") == "Y",
+        //     notifyOnFailure = resultSet.getString("notifyOnFailure") == "Y",
+        //     emailTo = Option(resultSet.getString("emailTo")),
+        //     emailSubject = Option(resultSet.getString("emailSubject")),
+        //     writeToHiveFlag = resultSet.getString("writeToHiveFlag") == "Y",
+        //     auditFlag = resultSet.getString("auditFlag") == "Y",
+        //     logLevel = resultSet.getString("logLevel"),
+        //     runId = resultSet.getString("runId"),
+        //     createdBy = resultSet.getString("createdBy"),
+        //     runDate = resultSet.getDate("runDate")
+        //   ))
+        // } else {
+        //   throw new RuntimeException(s"No configuration found for job: $jobName")
+        // }
 
-      // Dummy config for now
-      createDummyConfig(jobName)
+        // Dummy config for now
+        appConfig = Some(createDummyConfig(jobName))
 
-    } finally {
-      if (resultSet != null) resultSet.close()
-      if (statement != null) statement.close()
-      if (connection != null) connection.close()
+      } catch {
+        case e: Exception =>
+          retries -= 1
+          println(s"Failed to connect to the database. Retries left: $retries. Error: ${e.getMessage}")
+          Thread.sleep(5000)
+      } finally {
+        if (resultSet != null) resultSet.close()
+        if (statement != null) statement.close()
+        if (connection != null) connection.close()
+      }
     }
+    appConfig.getOrElse(throw new RuntimeException("Failed to load configuration after multiple retries."))
   }
 
   private def parseMapping(mapping: String): Map[String, String] = {
