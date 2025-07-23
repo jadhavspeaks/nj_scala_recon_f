@@ -1,5 +1,7 @@
-package com.reconciliation.framework
+package com.reconciliation.framework.sinks
 
+import com.reconciliation.framework.core.AppConfig
+import com.reconciliation.framework.sinks.Logger
 import org.apache.spark.sql.{DataFrame, SaveMode, SparkSession}
 
 case class AuditLog(

@@ -2,7 +2,7 @@ package com.reconciliation.framework.reconciliators
 
 import com.reconciliation.framework.core.AppConfig
 import com.reconciliation.framework.readers.DataReader
-import com.reconciliation.framework.sinks.{AuditLogger, Logger}
+import com.reconciliation.framework.sinks.{AuditLogger, DeadLetterQueue, Logger}
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
