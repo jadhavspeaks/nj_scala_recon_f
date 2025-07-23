@@ -27,7 +27,8 @@ case class AppConfig(
     logLevel: String,
     runId: String,
     createdBy: String,
-    runDate: java.sql.Date
+                   runDate: String,
+                   delimiter: Option[String]
 )
 
 object Config {

@@ -4,6 +4,7 @@ CREATE TABLE RECON_CONFIG (
     sourcePath VARCHAR2(1000),
     sourceTable VARCHAR2(255),
     sourceQuery CLOB,
+    sourceDelimiter VARCHAR2(10),
     targetType VARCHAR2(50),
     targetPath VARCHAR2(1000),
     targetTable VARCHAR2(255),
