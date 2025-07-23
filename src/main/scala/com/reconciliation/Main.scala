@@ -7,29 +7,45 @@ import com.reconciliation.reader.DataReader
 import com.reconciliation.writer.DataWriter
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import java.sql.{Connection, DriverManager}
-import scala.collection.mutable.ListBuffer
+import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.core.config.Configurator
+import java.io.File
 
 object Main {
 
   def main(args: Array[String]): Unit = {
     val jobName = args(0)
 
+    // Set up logging
+    val logDir = s"logs/$jobName"
+    new File(logDir).mkdirs()
+    System.setProperty("log.dir", logDir)
+    val logger = LogManager.getLogger(this.getClass.getName)
+
+
     val spark = SparkSession.builder()
       .appName(s"Data Reconciliation: $jobName")
       .enableHiveSupport()
       .getOrCreate()
 
+    logger.info(s"Starting reconciliation job: $jobName")
+
     val config = readConfig(jobName)
+    logger.info(s"Configuration loaded for job: $jobName")
 
     val startTime = System.currentTimeMillis()
     var status = "SUCCESS"
     var mismatchCount = 0L
+    var resultDF: DataFrame = null
 
     try {
       val sourceDF = DataReader.read(spark, config)
+      logger.info("Source data loaded successfully.")
       val targetDF = if (config.reconType.toLowerCase == "s2t") DataReader.read(spark, config.copy(sourceType = config.targetType, sourceLocation = config.targetLocation)) else null
+      if (targetDF != null) logger.info("Target data loaded successfully.")
 
-      val resultDF = config.reconType.toLowerCase match {
+
+      resultDF = config.reconType.toLowerCase match {
         case "s2t" =>
           ReconLogic.s2t(spark, sourceDF, targetDF, config)
         case "sql" =>
@@ -37,23 +53,31 @@ object Main {
         case _ =>
           throw new IllegalArgumentException(s"Unsupported recon type: ${config.reconType}")
       }
+      logger.info("Reconciliation logic executed.")
+
 
       mismatchCount = resultDF.count()
       if (mismatchCount > 0) {
         status = "FAILURE"
-        DataWriter.write(resultDF, config.copy(targetType = "hive", targetLocation = "recon_results"))
+        logger.warn(s"Mismatch found. Count: $mismatchCount")
+        DataWriter.write(resultDF, config.copy(targetType = "hive", targetLocation = "recon_results"), status, startTime, System.currentTimeMillis())
+        logger.info("Mismatch results written to Hive.")
+      } else {
+        logger.info("No mismatches found.")
       }
     } catch {
       case e: Exception =>
         status = "ERROR"
-        e.printStackTrace()
+        logger.error(s"An error occurred during reconciliation: ${e.getMessage}", e)
     } finally {
       val endTime = System.currentTimeMillis()
       val totalTime = (endTime - startTime) / 1000
+      logger.info(s"Reconciliation finished with status: $status. Total time: $totalTime seconds.")
 
-      val emailBody = generateEmailBody(config, status, mismatchCount, totalTime)
+
       if ((status == "SUCCESS" && config.notifyOnSuccess == "Y") || (status != "SUCCESS" && config.notifyOnFailure == "Y")) {
-        EmailService.sendEmail(config.emailTo, config.emailCc, s"Reconciliation Report: ${config.jobName} - $status", emailBody)
+        EmailService.sendEmail(config, status, mismatchCount, totalTime, resultDF)
+        logger.info("Email notification sent.")
       }
 
       spark.stop()
@@ -97,33 +121,5 @@ object Main {
         connection.close()
       }
     }
-  }
-
-  def generateEmailBody(config: ReconConfig, status: String, mismatchCount: Long, totalTime: Long): String = {
-    s"""
-      |<html>
-      |<body>
-      |<h2>Reconciliation Report for ${config.jobName}</h2>
-      |<table border="1">
-      |  <tr>
-      |    <td>Job Name</td>
-      |    <td>${config.jobName}</td>
-      |  </tr>
-      |  <tr>
-      |    <td>Status</td>
-      |    <td style="color:${if (status == "SUCCESS") "green" else "red"};">${status}</td>
-      |  </tr>
-      |  <tr>
-      |    <td>Mismatch Count</td>
-      |    <td>${mismatchCount}</td>
-      |  </tr>
-      |  <tr>
-      |    <td>Total Time (seconds)</td>
-      |    <td>${totalTime}</td>
-      |  </tr>
-      |</table>
-      |</body>
-      |</html>
-    """.stripMargin
   }
 }
