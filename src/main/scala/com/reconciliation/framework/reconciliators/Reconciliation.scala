@@ -3,6 +3,7 @@ package com.reconciliation.framework.reconciliators
 import com.reconciliation.framework.core.AppConfig
 import com.reconciliation.framework.readers.DataReader
 import com.reconciliation.framework.sinks.{AuditLogger, DeadLetterQueue, Logger}
+import com.reconciliation.framework.services.EmailService
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
@@ -32,24 +33,33 @@ class SourceToTargetReconciliation extends Reconciliation with Logger {
       val sourceMinusTarget = aliasedSourceDf.exceptAll(targetDf)
       val targetMinusSource = targetDf.exceptAll(aliasedSourceDf)
 
-      if (sourceMinusTarget.count() == 0 && targetMinusSource.count() == 0) {
+      val sourceMismatchCount = sourceMinusTarget.count()
+      val targetMismatchCount = targetMinusSource.count()
+
+      if (sourceMismatchCount == 0 && targetMismatchCount == 0) {
         val message = "Source and Target are perfectly matched."
         logger.info(message)
         AuditLogger.log(spark, config, "SourceToTarget", "SUCCESS", message)
+        if (config.notifyOnSuccess) {
+          sendSuccessEmail(config, message)
+        }
       } else {
-          val sourceMismatchCount = sourceMinusTarget.count()
-          val targetMismatchCount = targetMinusSource.count()
-          val message = s"Mismatches found. $sourceMismatchCount records in source only, $targetMismatchCount records in target only."
+        val message = s"Mismatches found. $sourceMismatchCount records in source only, $targetMismatchCount records in target only."
         logger.warn(message)
         AuditLogger.log(spark, config, "SourceToTarget", "FAILURE", message)
 
-          if(sourceMismatchCount > 0) {
-            DeadLetterQueue.write(spark, config, "SourceToTarget_SourceOnly", sourceMinusTarget)
-          }
+        if (config.notifyOnFailure) {
+          val detailedReport = generateDetailedReport(spark, config, sourceMinusTarget, targetMinusSource)
+          sendFailureEmail(config, message, detailedReport)
+        }
 
-          if(targetMismatchCount > 0) {
-            DeadLetterQueue.write(spark, config, "SourceToTarget_TargetOnly", targetMinusSource)
-          }
+        if (sourceMismatchCount > 0) {
+          DeadLetterQueue.write(spark, config, "SourceToTarget_SourceOnly", sourceMinusTarget)
+        }
+
+        if (targetMismatchCount > 0) {
+          DeadLetterQueue.write(spark, config, "SourceToTarget_TargetOnly", targetMinusSource)
+        }
       }
     } catch {
       case e: Exception =>
@@ -57,6 +67,58 @@ class SourceToTargetReconciliation extends Reconciliation with Logger {
         logger.error(message, e)
         AuditLogger.log(spark, config, "SourceToTarget", "ERROR", message)
     }
+  }
+
+  private def generateDetailedReport(spark: SparkSession, config: AppConfig, sourceMinusTarget: DataFrame, targetMinusSource: DataFrame): String = {
+    val sb = new StringBuilder()
+    // A simple implementation to convert DataFrame to HTML table
+    // In a real application, you might want to use a template engine like FreeMarker or Thymeleaf
+    sb.append("<table border='1'>")
+    sb.append("<tr><th>Source Only</th></tr>")
+    sourceMinusTarget.collect().foreach { row =>
+      sb.append("<tr>")
+      row.toSeq.foreach(cell => sb.append(s"<td>$cell</td>"))
+      sb.append("</tr>")
+    }
+    sb.append("</table>")
+
+    sb.append("<br/>")
+
+    sb.append("<table border='1'>")
+    sb.append("<tr><th>Target Only</th></tr>")
+    targetMinusSource.collect().foreach { row =>
+      sb.append("<tr>")
+      row.toSeq.foreach(cell => sb.append(s"<td>$cell</td>"))
+      sb.append("</tr>")
+    }
+    sb.append("</table>")
+    sb.toString()
+  }
+
+  private def sendSuccessEmail(config: AppConfig, message: String): Unit = {
+    val subject = s"Reconciliation Success for ${config.jobName}"
+    val template = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/config/detailed_report_template.html")).mkString
+    val body = template
+      .replace("${jobName}", config.jobName)
+      .replace("${status}", "Success")
+      .replace("${statusClass}", "success")
+      .replace("${mismatchCount}", "0")
+      .replace("${totalTime}", "N/A")
+      .replace("${detailedReport}", "")
+    EmailService.sendEmail(config, subject, body)
+  }
+
+  private def sendFailureEmail(config: AppConfig, message: String, detailedReport: String): Unit = {
+    val subject = s"Reconciliation Failure for ${config.jobName}"
+    val template = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/config/detailed_report_template.html")).mkString
+    val body = template
+      .replace("${jobName}", config.jobName)
+      .replace("${status}", "Failure")
+      .replace("${statusClass}", "fail")
+      .replace("${mismatchCount}", message.split(" ")(2))
+      .replace("${totalTime}", "N/A")
+      .replace("${detailedReport}", detailedReport)
+    EmailService.sendEmail(config, subject, body)
   }
 }
 

@@ -1,0 +1,45 @@
+<html>
+<head>
+  <style>
+    .success {
+      background-color: #90EE90; /* Green */
+    }
+    .fail {
+      background-color: #FFC300; /* Amber */
+    }
+  </style>
+</head>
+<body>
+  <h2>Reconciliation Report for ${jobName}</h2>
+  <h3>Execution Summary</h3>
+  <table border="1">
+    <tr>
+      <td>Job Name</td>
+      <td>${jobName}</td>
+    </tr>
+    <tr>
+      <td>Status</td>
+      <td class="${statusClass}">${status}</td>
+    </tr>
+    <tr>
+      <td>Mismatch Count</td>
+      <td>${mismatchCount}</td>
+    </tr>
+    <tr>
+      <td>Total Time (seconds)</td>
+      <td>${totalTime}</td>
+    </tr>
+  </table>
+  <h3>Detailed Report</h3>
+  <table border="1">
+    <tr class="${statusClass}">
+      <th>Source Primary Key</th>
+      <th>Target Primary Key</th>
+      <th>Mismatch Column</th>
+      <th>Source Value</th>
+      <th>Target Value</th>
+    </tr>
+    ${detailedReport}
+  </table>
+</body>
+</html>
